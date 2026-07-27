@@ -55,6 +55,20 @@ SisTest >> testEval [
 ]
 
 { #category : 'tests' }
+SisTest >> testEvalWithUnserializableResult [
+	| url postData resp errorInfo description |
+	url := self baseUrl / 'eval'.
+	postData := { ('code' -> 'Object new') } asDictionary.
+	resp := self post: url dictionary: postData.
+	self assert: (resp at: #success).
+	errorInfo := resp at: #error.
+	description := errorInfo at: #description.
+	self assert: (description includesSubstring: 'Result is a').
+	self assert: (description includesSubstring: 'cannot be serialized as JSON').
+	self assert: (errorInfo includesKey: #suggestion)
+]
+
+{ #category : 'tests' }
 SisTest >> testEvalWithError [
 	| url postData resp errorInfo receiver stackTrace |
 	url := self baseUrl / 'eval'.
@@ -190,6 +204,21 @@ SisTest >> testInstallProject [
 	errorDesc := result at: #description.
 	self assert: ((errorDesc beginsWith: 'Error: Name not found') or: [errorDesc beginsWith: 'MetacelloConflictingProjectError:']). "for CI"
 	
+]
+
+{ #category : 'tests' }
+SisTest >> testInstallProjectWithForce [
+	| url resp result errorDesc |
+	url := self baseUrl / 'install-project'.
+	url queryAt: 'project_name' put: 'PharoSmalltalkInteropServer'.
+	url queryAt: 'repository_url' put: 'github://mumez/PharoSmalltalkInteropServer:main/src'.
+	url queryAt: 'load_groups' put: 'NonExistentGroupA, NonExistentGroupB'.
+	url queryAt: 'force' put: 'true'.
+	resp := self get: url.
+	self deny: (resp at: #success).
+	result := resp at: #error.
+	errorDesc := result at: #description.
+	self assert: ((errorDesc beginsWith: 'Error: Name not found') or: [errorDesc beginsWith: 'MetacelloConflictingProjectError:']). "for CI"
 ]
 
 { #category : 'tests' }
@@ -511,6 +540,21 @@ SisTest >> testApplySettings [
 	getResult := getResp at: #result.
 	self assert: (getResult at: #stackSize) equals: 200.
 	self assert: (getResult at: #customKey) equals: 'customValue'
+]
+
+{ #category : 'tests' }
+SisTest >> testGetSettingsWithUnserializableValue [
+	| url resp errorInfo |
+	SisServer current settings at: #testUnserializable put: Object new.
+	[
+		url := self baseUrl / 'get-settings'.
+		resp := self get: url.
+		self deny: (resp at: #success).
+		errorInfo := resp at: #error.
+		self assert: ((errorInfo at: #description) includesSubstring: 'JSON mapping not found')
+	] ensure: [
+		SisServer current settings settingsDict removeKey: #testUnserializable ifAbsent: []
+	]
 ]
 
 { #category : 'tests' }

@@ -103,6 +103,7 @@ SisServer >> buildSummaryFor: targetType structure: structure [
 SisServer >> createTeapot [
 
 	^ (Teapot configure: self teapotConfig associations)
+		  exception: NeoJSONMappingNotFound -> [:ex :req | self onJsonMappingNotFound: req for: ex ];
 		  before: '/*' -> [:req | self onBeforeRequest: req ];
 		  after: '/*' -> [:req | self onAfterRequest: req ];
 		  POST: '/eval' -> [ :req | self handleEval: req ];
@@ -576,16 +577,25 @@ SisServer >> handleImportPackage: request [
 SisServer >> handleInstallProject: request [
 
 	^ self returnResultDo: [
-			  | projectName  repositoryUrl loadGroups loadOptions registration |
+			  | projectName repositoryUrl loadGroups loadOptions forceParam force metacello registration |
 			  projectName := request at: #project_name.
 			  repositoryUrl := request at: #repository_url.
 			  loadGroups := request at: #load_groups ifAbsent: [ '' ].
 			  loadOptions := (loadGroups findTokens: ',') collect: #trim.
-			  [registration := Metacello new
-				                  baseline: projectName;
-				                  repository: repositoryUrl;
-				                  load: loadOptions.
-			  'Installed: ' , registration printString] on: MCMergeOrLoadWarning do:[ :ex | Error signal: ex description] ]
+			  forceParam := request at: #force ifAbsent: [ 'false' ].
+			  force := forceParam asString asLowercase = 'true'.
+			  [
+				  metacello := Metacello new
+					  baseline: projectName;
+					  repository: repositoryUrl.
+				  force ifTrue: [
+					  metacello
+						  onConflict: [ :e | e useIncoming ];
+						  onUpgrade: [ :e | e useIncoming ];
+						  ignoreImage ].
+				  registration := metacello load: loadOptions.
+				  'Installed: ' , registration printString
+			  ] on: MCMergeOrLoadWarning do: [ :ex | Error signal: ex description ] ]
 ]
 
 { #category : 'handling' }
@@ -781,6 +791,21 @@ SisServer >> onBeforeRequest: aTeapotRequest [
 	self announcer announce: (SisRequestAnnouncement before: aTeapotRequest )
 ]
 
+{ #category : 'handling-error' }
+SisServer >> onJsonMappingNotFound: aTeapotRequest for: aNeoJSONMappingNotFound [
+	| errorInfo unmappedClass resultDict isEval |
+	unmappedClass := aNeoJSONMappingNotFound object.
+	errorInfo := {'description' -> ('JSON mapping not found for: {1}' format: {unmappedClass})} asDictionary.
+	resultDict := {'error' -> errorInfo. 'success' -> false} asDictionary.
+	isEval := aTeapotRequest url asString = '/eval'.
+	isEval ifTrue: [
+        resultDict at: 'success' put: true.
+        errorInfo at: 'description' put: ('Result is a {1} instance which cannot be serialized as JSON' format: {unmappedClass}).
+        errorInfo at: 'suggestion' put: ('Modify the expression to return a serializable value. For a human-readable result, append `printString` (e.g., `(<your expression>) printString`)')
+	].
+	^ TeaResponse ok body: resultDict
+]
+
 { #category : 'private' }
 SisServer >> receiverErrorInfoFrom: receiverObject [
 	| receiverErrorInfo values |
@@ -850,7 +875,7 @@ SisServer >> stop [
 
 { #category : 'subscription' }
 SisServer >> subscribeOnRequest: aValuable for: aSubscriber [
-	self announcer when: SisRequestAnnouncement do: aValuable for: aSubscriber 
+	self announcer when: SisRequestAnnouncement do: aValuable for: aSubscriber
 ]
 
 { #category : 'accessing' }
