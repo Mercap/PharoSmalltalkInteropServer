@@ -136,6 +136,20 @@ SisSettings >> stackSize: aNumber [
 	self at: #stackSize put: aNumber
 ]
 
+{ #category : 'accessing' }
+SisSettings >> formatterClass [
+	"Name of the formatter class applied to every method of a package on import and before
+	 export. nil, the default, means no formatting at all - the behaviour of every server
+	 that does not configure this setting."
+
+	^ self at: #formatterClass fallback: {'PHARO_SIS_FORMATTER_CLASS'. nil}
+]
+
+{ #category : 'accessing' }
+SisSettings >> formatterClass: aClassName [
+	self at: #formatterClass put: aClassName
+]
+
 { #category : 'accessing-keys' }
 SisSettings >> teapotConfigKeys [
 	^ #(#defaultOutput #port)
@@ -143,7 +157,7 @@ SisSettings >> teapotConfigKeys [
 
 { #category : 'accessing-keys' }
 SisSettings >> definedSettingsKeys [
-	^ #(#screenshotDir #stackSize)
+	^ #(#screenshotDir #stackSize #formatterClass)
 ]
 
 { #category : 'private' }

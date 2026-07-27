@@ -259,6 +259,7 @@ The API accepts both camelCase and snake_case keys (e.g., `stackSize` or `stack_
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `stackSize` (or `stack_size`) | integer | 100 | Maximum stack trace depth for error reporting |
+| `formatterClass` (or `formatter_class`) | string | `PHARO_SIS_FORMATTER_CLASS`, otherwise none | Formatter class applied to every method of a package on `/import-package` and before `/export-package` writes it. Unset means no formatting. Set it to `BuenosAiresSmalltalkFormatter` to keep a project in ba-st house style. An error is signalled when the named class is not in the image, so a typo fails loudly instead of silently formatting with the wrong style |
 
 
 ### Get Settings (`GET /get-settings`)

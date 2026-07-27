@@ -554,6 +554,12 @@
                         "type": "integer",
                         "description": "Maximum stack trace depth for error reporting (also accepts 'stack_size')",
                         "default": 100
+                    },
+                    "formatterClass": {
+                        "type": "string",
+                        "description": "Name of the formatter class applied to every method of a package on import and before export (also accepts 'formatter_class'). Absent or null means no formatting. Defaults to the PHARO_SIS_FORMATTER_CLASS environment variable.",
+                        "nullable": true,
+                        "example": "BuenosAiresSmalltalkFormatter"
                     }
                 },
                 "additionalProperties": true,

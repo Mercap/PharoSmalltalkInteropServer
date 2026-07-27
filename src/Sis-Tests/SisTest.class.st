@@ -607,3 +607,128 @@ SisTest >> testApplySettingsWithMixedCaseKeys [
 	self assert: (getResult at: #stackSize) equals: 180.
 	self assert: (getResult at: #anotherKey) equals: 'mixedValue'
 ]
+
+{ #category : 'private-formatting' }
+SisTest >> formatterClassName [
+	^ 'BuenosAiresSmalltalkFormatter'
+]
+
+{ #category : 'private-formatting' }
+SisTest >> dummyPackageName [
+	^ 'Sis-Tests-Dummy'
+]
+
+{ #category : 'private-formatting' }
+SisTest >> skipUnlessTheFormatterIsInTheImage [
+  "BuenosAiresSmalltalkFormatter ships in Buoy's Tools group, which the server does not
+	 depend on. Skip rather than force that dependency into the baseline."
+
+  ( Smalltalk globals includesKey: self formatterClassName asSymbol ) ifFalse: [
+      self skip: self formatterClassName , ' is not in this image' ]
+]
+
+{ #category : 'private-formatting' }
+SisTest >> withFormatterClass: aClassNameOrNil do: aBlock [
+	| settings wasConfigured previousValue |
+	settings := SisServer current settings.
+	wasConfigured := settings settingsDict includesKey: #formatterClass.
+	previousValue := settings at: #formatterClass ifAbsent: [ nil ].
+	settings formatterClass: aClassNameOrNil.
+	^ aBlock ensure: [
+		wasConfigured
+			ifTrue: [ settings formatterClass: previousValue ]
+			ifFalse: [ settings settingsDict removeKey: #formatterClass ifAbsent: [ nil ] ] ]
+]
+
+{ #category : 'private-formatting' }
+SisTest >> restoringDummyPackageDo: aBlock [
+	"The formatting tests recompile the dummy package; put its methods back afterwards."
+
+	| originalSources |
+	originalSources := (self packageOrganizer packageNamed: self dummyPackageName) methods
+		collect: [ :each | { each methodClass. each sourceCode. each protocol } ].
+	^ aBlock ensure: [
+		originalSources do: [ :each |
+			each first compile: each second classified: each third ] ]
+]
+
+{ #category : 'private-formatting' }
+SisTest >> exportDummyPackageTo: aDirectory [
+	| url resp |
+	url := self baseUrl / 'export-package'.
+	url queryAt: 'package_name' put: self dummyPackageName.
+	url queryAt: 'path' put: aDirectory absolutePath pathString.
+	resp := self get: url.
+	self assert: (resp at: #success).
+	^ resp at: #result
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageIsANoOpWithoutFormatterClass [
+	self withFormatterClass: nil do: [
+		self
+			assert: (SisServer current formatMethodsInPackageNamed: self dummyPackageName)
+			equals: 0.
+		self assert: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab) ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageSignalsErrorWhenTheFormatterIsNotInTheImage [
+	self withFormatterClass: 'SisNotAFormatterClass' do: [
+		self
+			should: [ SisServer current formatMethodsInPackageNamed: self dummyPackageName ]
+			raise: Error
+			withExceptionDo: [ :error |
+				self assert:
+					(error messageText includesSubstring: 'SisNotAFormatterClass') ] ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageAppliesTheConfiguredFormatterOnlyOnce [
+	| server |
+	self skipUnlessTheFormatterIsInTheImage.
+	server := SisServer current.
+	self restoringDummyPackageDo: [
+		self withFormatterClass: self formatterClassName do: [
+			self assert: (server formatMethodsInPackageNamed: self dummyPackageName) > 0.
+			self deny: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab).
+			self
+				assert: (server formatMethodsInPackageNamed: self dummyPackageName)
+				equals: 0 ] ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testImportPackageFormatsWhenFormatterClassIsSet [
+	| tempDir url resp result |
+	self skipUnlessTheFormatterIsInTheImage.
+	tempDir := FileSystem workingDirectory / 'temp_import_formatting'.
+	tempDir ensureCreateDirectory.
+	[ self restoringDummyPackageDo: [
+		self withFormatterClass: nil do: [ self exportDummyPackageTo: tempDir ].
+		self withFormatterClass: self formatterClassName do: [
+			url := self baseUrl / 'import-package'.
+			url queryAt: 'package_name' put: self dummyPackageName.
+			url queryAt: 'path' put: tempDir absolutePath pathString.
+			resp := self get: url.
+			self assert: (resp at: #success).
+			result := resp at: #result.
+			self assert: (result beginsWith: self dummyPackageName , ' imported from: ').
+			self assert: (result includesSubstring: 'formatted').
+			self deny: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab) ] ] ]
+		ensure: [ tempDir deleteAll ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testExportPackageFormatsBeforeWritingTheTonelFiles [
+	| tempDir writtenSource |
+	self skipUnlessTheFormatterIsInTheImage.
+	tempDir := FileSystem workingDirectory / 'temp_export_formatting'.
+	tempDir ensureCreateDirectory.
+	[ self restoringDummyPackageDo: [
+		self withFormatterClass: self formatterClassName do: [
+			self assert: ((self exportDummyPackageTo: tempDir) includesSubstring: 'formatted').
+			writtenSource := (tempDir / self dummyPackageName / 'SisDummyTest.class.st') contents.
+			self assert: (writtenSource includesSubstring: '  ans := 3 + 2').
+			self deny: (writtenSource includesSubstring: String tab , 'ans := 3 + 2') ] ] ]
+		ensure: [ tempDir deleteAll ]
+]
