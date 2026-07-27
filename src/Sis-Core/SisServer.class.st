@@ -484,6 +484,40 @@ SisServer >> extractWorldStructure [
 		yourself
 ]
 
+{ #category : 'private' }
+SisServer >> formatMethodsInPackageNamed: aPackageName [
+	"Rewrite every method of the package with the configured formatter and answer how many of
+	 them changed. Answer 0 when no formatterClass is configured or the package is not in the
+	 image. Formatting is idempotent, so an already conforming package also answers 0.
+	 Walking `package methods` is deliberate: it covers class-side methods and extension
+	 methods, both of which a definedClasses-based walk would skip."
+
+	| formatterName formatter package |
+	formatterName := self settings formatterClass.
+	formatterName ifNil: [ ^ 0 ].
+	formatter := Smalltalk at: formatterName asString asSymbol ifAbsent: [
+		Error signal:
+			'Configured formatterClass ' , formatterName asString , ' is not in the image' ].
+	package := self packageOrganizer packageNamed: aPackageName ifAbsent: [ ^ 0 ].
+	^ package methods inject: 0 into: [ :changed :each |
+		| formatted |
+		formatted := (formatter new format: each ast) withInternalLineEndings.
+		formatted = each sourceCode withInternalLineEndings
+			ifTrue: [ changed ]
+			ifFalse: [
+				each methodClass compile: formatted classified: each protocol.
+				changed + 1 ] ]
+]
+
+{ #category : 'private' }
+SisServer >> formattedSuffix: aNumberOfMethods [
+	"Mention the formatting in the import/export result, but only when it did something."
+
+	^ aNumberOfMethods isZero
+		ifTrue: [ '' ]
+		ifFalse: [ ' (formatted ' , aNumberOfMethods printString , ' methods)' ]
+]
+
 { #category : 'handling' }
 SisServer >> handleApplySettings: request [
 	^ self returnResultDo: [
@@ -509,14 +543,16 @@ SisServer >> handleEval: request [
 SisServer >> handleExportPackage: request [
 
 	^ self returnResultDo: [
-			  | packageName outputPath snapshot outputPathRef writer |
+			  | packageName outputPath snapshot outputPathRef writer formattedCount |
 			  packageName := request at: #package_name.
 			  outputPath := request at: #path.
+			  formattedCount := self formatMethodsInPackageNamed: packageName.
 			  snapshot := (MCPackage named: packageName) snapshot.
 			  outputPathRef := outputPath asFileReference.
 			  writer := TonelWriter on: outputPathRef ensureCreateDirectory.
 			  writer writeSnapshot: snapshot.
-			  packageName , ' exported to: ' , outputPathRef absolutePath pathString ]
+			  packageName , ' exported to: ' , outputPathRef absolutePath pathString
+			  , (self formattedSuffix: formattedCount) ]
 ]
 
 { #category : 'handling' }
@@ -561,15 +597,17 @@ SisServer >> handleGetSettings: request [
 SisServer >> handleImportPackage: request [
 
 	^ self returnResultDo: [
-			  | packageName sourcePath reader sourcePathRef |
+			  | packageName sourcePath reader sourcePathRef formattedCount |
 			  packageName := request at: #package_name.
 			  sourcePath := request at: #path.
 			  sourcePathRef := sourcePath asFileReference.
 			  reader := TonelReader on: sourcePathRef fileName: packageName.
 			  reader loadPackage.
 			  reader snapshot updatePackage: reader package.
+			  formattedCount := self formatMethodsInPackageNamed: packageName.
 			  packageName , ' imported from: '
-			  , sourcePathRef absolutePath pathString ]
+			  , sourcePathRef absolutePath pathString
+			  , (self formattedSuffix: formattedCount) ]
 ]
 
 { #category : 'handling' }

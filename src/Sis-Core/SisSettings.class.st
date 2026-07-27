@@ -27,21 +27,15 @@ SisSettings class >> initialize [
 	default := nil
 ]
 
+{ #category : 'converting' }
+SisSettings >> asDictionary [
+    self ensureDefinedKeys.
+	^ (self keys collect: [ :each | each -> (self at: each)]) asDictionary
+]
+
 { #category : 'actions-dictionary' }
 SisSettings >> at: key [
 	^ self settingsDict at: key
-]
-
-{ #category : 'actions-dictionary' }
-SisSettings >> at: key ifAbsent: aBlock [
-	^ self settingsDict at: key ifAbsent: aBlock
-]
-
-{ #category : 'actions-dictionary' }
-SisSettings >> at: key fallback: anArray type: aClass [
-	| rawValue |
-	rawValue := self at: key fallback: anArray.
-	^ rawValue ifNotNil: [ aClass readFrom: rawValue asString ]
 ]
 
 { #category : 'actions-dictionary' }
@@ -55,6 +49,18 @@ SisSettings >> at: key fallback: anArray [
 ]
 
 { #category : 'actions-dictionary' }
+SisSettings >> at: key fallback: anArray type: aClass [
+	| rawValue |
+	rawValue := self at: key fallback: anArray.
+	^ rawValue ifNotNil: [ aClass readFrom: rawValue asString ]
+]
+
+{ #category : 'actions-dictionary' }
+SisSettings >> at: key ifAbsent: aBlock [
+	^ self settingsDict at: key ifAbsent: aBlock
+]
+
+{ #category : 'actions-dictionary' }
 SisSettings >> at: key ifAbsentPut: aBlock [
 	^ self settingsDict at: key ifAbsentPut: aBlock
 ]
@@ -62,11 +68,6 @@ SisSettings >> at: key ifAbsentPut: aBlock [
 { #category : 'actions-dictionary' }
 SisSettings >> at: key put: value [
 	^ self settingsDict at: key put: value
-]
-
-{ #category : 'actions-dictionary' }
-SisSettings >> keys [
-	^ self settingsDict keys
 ]
 
 { #category : 'accessing' }
@@ -79,9 +80,33 @@ SisSettings >> defaultOutput: aSymbol [
 	self at: #defaultOutput put: aSymbol
 ]
 
-{ #category : 'initialization' }
-SisSettings >> initialize [
-	settingsDict := nil
+{ #category : 'accessing-keys' }
+SisSettings >> definedSettingsKeys [
+	^ #(#screenshotDir #stackSize #formatterClass)
+]
+
+{ #category : 'private' }
+SisSettings >> ensureDefinedKeys [
+	self definedSettingsKeys do: [:each | self perform: each asSymbol ]
+]
+
+{ #category : 'private' }
+SisSettings >> envAt: key ifAbsent: aBlock [
+    ^ OSEnvironment current at: key ifAbsent: aBlock
+]
+
+{ #category : 'accessing' }
+SisSettings >> formatterClass [
+	"Name of the formatter class applied to every method of a package on import and before
+	 export. nil, the default, means no formatting at all - the behaviour of every server
+	 that does not configure this setting."
+
+	^ self at: #formatterClass fallback: {'PHARO_SIS_FORMATTER_CLASS'. nil}
+]
+
+{ #category : 'accessing' }
+SisSettings >> formatterClass: aClassName [
+	self at: #formatterClass put: aClassName
 ]
 
 { #category : 'initialization' }
@@ -89,6 +114,16 @@ SisSettings >> initFrom: otherSettings [
 	self initialize.
 	otherSettings settingsDict keysAndValuesDo: [ :k :v |
 		self settingsDict at: k put: v ]
+]
+
+{ #category : 'initialization' }
+SisSettings >> initialize [
+	settingsDict := nil
+]
+
+{ #category : 'actions-dictionary' }
+SisSettings >> keys [
+	^ self settingsDict keys
 ]
 
 { #category : 'accessing' }
@@ -99,16 +134,6 @@ SisSettings >> port [
 { #category : 'accessing' }
 SisSettings >> port: aNumber [
 	self at: #port put: aNumber
-]
-
-{ #category : 'accessing-private' }
-SisSettings >> settingsDict [
-	^ settingsDict ifNil: [ settingsDict := IdentityDictionary new ]
-]
-
-{ #category : 'accessing-private' }
-SisSettings >> settingsDict: anObject [
-	settingsDict := anObject
 ]
 
 { #category : 'accessing' }
@@ -126,6 +151,16 @@ SisSettings >> screenshotDirectory [
 	^ self screenshotDir asFileReference
 ]
 
+{ #category : 'accessing-private' }
+SisSettings >> settingsDict [
+	^ settingsDict ifNil: [ settingsDict := IdentityDictionary new ]
+]
+
+{ #category : 'accessing-private' }
+SisSettings >> settingsDict: anObject [
+	settingsDict := anObject
+]
+
 { #category : 'accessing' }
 SisSettings >> stackSize [
 	^ self at: #stackSize ifAbsentPut: [ 100 ]
@@ -136,21 +171,6 @@ SisSettings >> stackSize: aNumber [
 	self at: #stackSize put: aNumber
 ]
 
-{ #category : 'accessing-keys' }
-SisSettings >> teapotConfigKeys [
-	^ #(#defaultOutput #port)
-]
-
-{ #category : 'accessing-keys' }
-SisSettings >> definedSettingsKeys [
-	^ #(#screenshotDir #stackSize)
-]
-
-{ #category : 'private' }
-SisSettings >> ensureDefinedKeys [
-	self definedSettingsKeys do: [:each | self perform: each asSymbol ]
-]
-
 { #category : 'converting' }
 SisSettings >> teapotConfig [
 	^ self teapotConfigKeys inject: Dictionary new into: [ :dict :key |
@@ -158,13 +178,7 @@ SisSettings >> teapotConfig [
 		yourself ]
 ]
 
-{ #category : 'converting' }
-SisSettings >> asDictionary [
-    self ensureDefinedKeys.
-	^ (self keys collect: [ :each | each -> (self at: each)]) asDictionary
-]
-
-{ #category : 'private' }
-SisSettings >> envAt: key ifAbsent: aBlock [
-    ^ OSEnvironment current at: key ifAbsent: aBlock
+{ #category : 'accessing-keys' }
+SisSettings >> teapotConfigKeys [
+	^ #(#defaultOutput #port)
 ]

@@ -12,6 +12,12 @@ Class {
 	#package : 'Sis-Tests'
 }
 
+{ #category : 'class methods' }
+SisFixtureClassForTest class >> testClassMethodCcc [
+	"A class-side method for testing the is_class_method parameter"
+	^ #TestClassMethodCCC
+]
+
 { #category : 'actions' }
 SisFixtureClassForTest >> testMethodAaa [
 	^ SisTest
@@ -24,10 +30,4 @@ SisFixtureClassForTest >> testMethodAab [
 { #category : 'actions' }
 SisFixtureClassForTest >> testMethodBbb [
 	^ #TestSymbolBBB
-]
-
-{ #category : 'class methods' }
-SisFixtureClassForTest class >> testClassMethodCcc [
-	"A class-side method for testing the is_class_method parameter"
-	^ #TestClassMethodCCC
 ]

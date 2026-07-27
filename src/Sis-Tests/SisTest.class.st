@@ -5,27 +5,32 @@ Class {
 	#package : 'Sis-Tests'
 }
 
-{ #category : 'tests-settings' }
-SisTest >> testSettingsFallbackEnvVarFound [
-	| settings result |
-	settings := SisSettings new.
-	result := settings at: #testPath fallback: {'PATH'. ''}.
-	self assert: result equals: (OSEnvironment current at: 'PATH' ifAbsent: [''])
-]
-
-{ #category : 'tests-settings' }
-SisTest >> testSettingsFallbackEnvVarAbsent [
-	| settings result |
-	settings := SisSettings new.
-	result := settings at: #testPort fallback: {'PHARO_SIS_NONEXISTENT_XYZ'. 9999} type: Integer.
-	self assert: result equals: 9999
-]
-
 { #category : 'private' }
 SisTest >> baseUrl [
 	| port |
 	port := SisServer current teapotConfig at: #port ifAbsent: [8086].
 	^ ('http://localhost:{1}' format: { port } ) asUrl.
+]
+
+{ #category : 'private-formatting' }
+SisTest >> dummyPackageName [
+	^ 'Sis-Tests-Dummy'
+]
+
+{ #category : 'private-formatting' }
+SisTest >> exportDummyPackageTo: aDirectory [
+	| url resp |
+	url := self baseUrl / 'export-package'.
+	url queryAt: 'package_name' put: self dummyPackageName.
+	url queryAt: 'path' put: aDirectory absolutePath pathString.
+	resp := self get: url.
+	self assert: (resp at: #success).
+	^ resp at: #result
+]
+
+{ #category : 'private-formatting' }
+SisTest >> formatterClassName [
+	^ 'BuenosAiresSmalltalkFormatter'
 ]
 
 { #category : 'private' }
@@ -41,6 +46,86 @@ SisTest >> post: anUrl dictionary:  dict [
 	json := NeoJSONWriter  toString: dict.
 	resp := ZnEasy post: anUrl data:  (ZnEntity json: json).
 	^ NeoJSONReader fromString:  resp  contents
+]
+
+{ #category : 'private-formatting' }
+SisTest >> restoringDummyPackageDo: aBlock [
+	"The formatting tests recompile the dummy package; put its methods back afterwards."
+
+	| originalSources |
+	originalSources := (self packageOrganizer packageNamed: self dummyPackageName) methods
+		collect: [ :each | { each methodClass. each sourceCode. each protocol } ].
+	^ aBlock ensure: [
+		originalSources do: [ :each |
+			each first compile: each second classified: each third ] ]
+]
+
+{ #category : 'private-formatting' }
+SisTest >> skipUnlessTheFormatterIsInTheImage [
+  "BuenosAiresSmalltalkFormatter ships in Buoy's Tools group, which the server does not
+	 depend on. Skip rather than force that dependency into the baseline."
+
+  ( Smalltalk globals includesKey: self formatterClassName asSymbol ) ifFalse: [
+      self skip: self formatterClassName , ' is not in this image' ]
+]
+
+{ #category : 'tests' }
+SisTest >> testApplySettings [
+	| url postData resp result getUrl getResp getResult |
+	url := self baseUrl / 'apply-settings'.
+	postData := { ('settings' -> { ('stackSize' -> 200). ('customKey' -> 'customValue') } asDictionary) } asDictionary.
+	resp := self post: url dictionary: postData.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: 'Settings applied successfully').
+
+	"Verify settings were actually applied"
+	getUrl := self baseUrl / 'get-settings'.
+	getResp := self get: getUrl.
+	self assert: (getResp at: #success).
+	getResult := getResp at: #result.
+	self assert: (getResult at: #stackSize) equals: 200.
+	self assert: (getResult at: #customKey) equals: 'customValue'
+]
+
+{ #category : 'tests' }
+SisTest >> testApplySettingsWithMixedCaseKeys [
+	"Test that both camelCase and snake_case keys can be used together"
+	| url postData resp result getUrl getResp getResult |
+	url := self baseUrl / 'apply-settings'.
+	postData := { ('settings' -> { ('stackSize' -> 180). ('another_key' -> 'mixedValue') } asDictionary) } asDictionary.
+	resp := self post: url dictionary: postData.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: 'Settings applied successfully').
+
+	"Verify both settings were applied correctly"
+	getUrl := self baseUrl / 'get-settings'.
+	getResp := self get: getUrl.
+	self assert: (getResp at: #success).
+	getResult := getResp at: #result.
+	self assert: (getResult at: #stackSize) equals: 180.
+	self assert: (getResult at: #anotherKey) equals: 'mixedValue'
+]
+
+{ #category : 'tests' }
+SisTest >> testApplySettingsWithSnakeCaseKeys [
+	"Test that snake_case keys are normalized to camelCase"
+	| url postData resp result getUrl getResp getResult |
+	url := self baseUrl / 'apply-settings'.
+	postData := { ('settings' -> { ('stack_size' -> 150). ('custom_key' -> 'snakeCaseValue') } asDictionary) } asDictionary.
+	resp := self post: url dictionary: postData.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: 'Settings applied successfully').
+
+	"Verify settings were normalized to camelCase"
+	getUrl := self baseUrl / 'get-settings'.
+	getResp := self get: getUrl.
+	self assert: (getResp at: #success).
+	getResult := getResp at: #result.
+	self assert: (getResult at: #stackSize) equals: 150.
+	self assert: (getResult at: #customKey) equals: 'snakeCaseValue'
 ]
 
 { #category : 'tests' }
@@ -93,6 +178,55 @@ SisTest >> testExportImportPackage [
 	self assert: (result beginsWith: 'Sis-Tests-Dummy imported from: ').
 	
 	tempDir deleteAll
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testExportPackageFormatsBeforeWritingTheTonelFiles [
+	| tempDir writtenSource |
+	self skipUnlessTheFormatterIsInTheImage.
+	tempDir := FileSystem workingDirectory / 'temp_export_formatting'.
+	tempDir ensureCreateDirectory.
+	[ self restoringDummyPackageDo: [
+		self withFormatterClass: self formatterClassName do: [
+			self assert: ((self exportDummyPackageTo: tempDir) includesSubstring: 'formatted').
+			writtenSource := (tempDir / self dummyPackageName / 'SisDummyTest.class.st') contents.
+			self assert: (writtenSource includesSubstring: '  ans := 3 + 2').
+			self deny: (writtenSource includesSubstring: String tab , 'ans := 3 + 2') ] ] ]
+		ensure: [ tempDir deleteAll ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageAppliesTheConfiguredFormatterOnlyOnce [
+	| server |
+	self skipUnlessTheFormatterIsInTheImage.
+	server := SisServer current.
+	self restoringDummyPackageDo: [
+		self withFormatterClass: self formatterClassName do: [
+			self assert: (server formatMethodsInPackageNamed: self dummyPackageName) > 0.
+			self deny: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab).
+			self
+				assert: (server formatMethodsInPackageNamed: self dummyPackageName)
+				equals: 0 ] ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageIsANoOpWithoutFormatterClass [
+	self withFormatterClass: nil do: [
+		self
+			assert: (SisServer current formatMethodsInPackageNamed: self dummyPackageName)
+			equals: 0.
+		self assert: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab) ]
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testFormatMethodsInPackageSignalsErrorWhenTheFormatterIsNotInTheImage [
+	self withFormatterClass: 'SisNotAFormatterClass' do: [
+		self
+			should: [ SisServer current formatMethodsInPackageNamed: self dummyPackageName ]
+			raise: Error
+			withExceptionDo: [ :error |
+				self assert:
+					(error messageText includesSubstring: 'SisNotAFormatterClass') ] ]
 ]
 
 { #category : 'tests' }
@@ -148,6 +282,21 @@ SisTest >> testGetMethodSourceClassMethodOldWay [
 ]
 
 { #category : 'tests' }
+SisTest >> testGetMethodSourceClassMethodWithFalseFlag [
+	"Test that is_class_method=false returns instance method"
+	| url resp result |
+	url := self baseUrl / 'get-method-source'.
+	url queryAt: 'class_name' put: 'SisFixtureClassForTest'.
+	url queryAt: 'method_name' put: 'testMethodBbb'.
+	url queryAt: 'is_class_method' put: false.
+	resp := self get: url.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: 'testMethodBbb').
+	self assert: (result includesSubstring: 'TestSymbolBBB')
+]
+
+{ #category : 'tests' }
 SisTest >> testGetMethodSourceClassMethodWithFlag [
 	"Test getting a class method using the is_class_method parameter"
 	| url resp result |
@@ -163,18 +312,35 @@ SisTest >> testGetMethodSourceClassMethodWithFlag [
 ]
 
 { #category : 'tests' }
-SisTest >> testGetMethodSourceClassMethodWithFalseFlag [
-	"Test that is_class_method=false returns instance method"
+SisTest >> testGetSettings [
 	| url resp result |
-	url := self baseUrl / 'get-method-source'.
-	url queryAt: 'class_name' put: 'SisFixtureClassForTest'.
-	url queryAt: 'method_name' put: 'testMethodBbb'.
-	url queryAt: 'is_class_method' put: false.
+	url := self baseUrl / 'get-settings'.
 	resp := self get: url.
 	self assert: (resp at: #success).
 	result := resp at: #result.
-	self assert: (result includesSubstring: 'testMethodBbb').
-	self assert: (result includesSubstring: 'TestSymbolBBB')
+	self assert: (result isKindOf: Dictionary).
+	self assert: (result includesKey: #stackSize)
+]
+
+{ #category : 'tests-formatting' }
+SisTest >> testImportPackageFormatsWhenFormatterClassIsSet [
+	| tempDir url resp result |
+	self skipUnlessTheFormatterIsInTheImage.
+	tempDir := FileSystem workingDirectory / 'temp_import_formatting'.
+	tempDir ensureCreateDirectory.
+	[ self restoringDummyPackageDo: [
+		self withFormatterClass: nil do: [ self exportDummyPackageTo: tempDir ].
+		self withFormatterClass: self formatterClassName do: [
+			url := self baseUrl / 'import-package'.
+			url queryAt: 'package_name' put: self dummyPackageName.
+			url queryAt: 'path' put: tempDir absolutePath pathString.
+			resp := self get: url.
+			self assert: (resp at: #success).
+			result := resp at: #result.
+			self assert: (result beginsWith: self dummyPackageName , ' imported from: ').
+			self assert: (result includesSubstring: 'formatted').
+			self deny: ((SisDummyTest sourceCodeAt: #testAdd) includesSubstring: String tab) ] ] ]
+		ensure: [ tempDir deleteAll ]
 ]
 
 { #category : 'tests' }
@@ -236,53 +402,6 @@ SisTest >> testListPackages [
 	result := resp at: #result.
 	self assert: (result includes: 'Sis-Core').
 	self assert: (result includes: 'Sis-Tests')
-]
-
-{ #category : 'tests' }
-SisTest >> testRunClassTest [
-	| url resp result |
-	url := self baseUrl / 'run-class-test'.
-	url queryAt: 'class_name' put: 'SisDummyTest'.
-	resp := self get: url.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result includesSubstring: '2 ran, 2 passed, ')
-]
-
-{ #category : 'tests' }
-SisTest >> testRunPackageTest [
-	| url resp result |
-	url := self baseUrl / 'run-package-test'.
-	url queryAt: 'package_name' put: 'Sis-Tests-Dummy'.
-	resp := self get: url.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result includesSubstring: '3 ran, 3 passed, ')
-]
-
-{ #category : 'tests-subscription' }
-SisTest >> testRequestAnnouncementDeliveredToSubscriber [
-	| server announcements url resp requestAnnouncements |
-	server := SisServer current.
-	announcements := OrderedCollection new.
-
-	[
-		server
-			subscribeOnRequest: [ :announcement | announcements add: announcement ]
-			for: self.
-
-		url := self baseUrl / 'list-packages'.
-		resp := self get: url.
-		self assert: (resp at: #success).
-
-		requestAnnouncements := announcements select: [ :each |
-			(each teapotRequest url asString includesSubstring: '/list-packages') ].
-
-		self assert: requestAnnouncements size equals: 2.
-		self assert: requestAnnouncements first class equals: SisRequestAnnouncement.
-		self assert: requestAnnouncements first type equals: #before.
-		self assert: requestAnnouncements second type equals: #after
-	] ensure: [ server unsubscribe: self ]
 ]
 
 { #category : 'tests' }
@@ -419,6 +538,53 @@ SisTest >> testReadScreenSpec [
 	self assert: (summary includesSubstring: 'Spec')
 ]
 
+{ #category : 'tests-subscription' }
+SisTest >> testRequestAnnouncementDeliveredToSubscriber [
+	| server announcements url resp requestAnnouncements |
+	server := SisServer current.
+	announcements := OrderedCollection new.
+
+	[
+		server
+			subscribeOnRequest: [ :announcement | announcements add: announcement ]
+			for: self.
+
+		url := self baseUrl / 'list-packages'.
+		resp := self get: url.
+		self assert: (resp at: #success).
+
+		requestAnnouncements := announcements select: [ :each |
+			(each teapotRequest url asString includesSubstring: '/list-packages') ].
+
+		self assert: requestAnnouncements size equals: 2.
+		self assert: requestAnnouncements first class equals: SisRequestAnnouncement.
+		self assert: requestAnnouncements first type equals: #before.
+		self assert: requestAnnouncements second type equals: #after
+	] ensure: [ server unsubscribe: self ]
+]
+
+{ #category : 'tests' }
+SisTest >> testRunClassTest [
+	| url resp result |
+	url := self baseUrl / 'run-class-test'.
+	url queryAt: 'class_name' put: 'SisDummyTest'.
+	resp := self get: url.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: '2 ran, 2 passed, ')
+]
+
+{ #category : 'tests' }
+SisTest >> testRunPackageTest [
+	| url resp result |
+	url := self baseUrl / 'run-package-test'.
+	url queryAt: 'package_name' put: 'Sis-Tests-Dummy'.
+	resp := self get: url.
+	self assert: (resp at: #success).
+	result := resp at: #result.
+	self assert: (result includesSubstring: '3 ran, 3 passed, ')
+]
+
 { #category : 'tests' }
 SisTest >> testSearchClassesLike [
 	| url resp result |
@@ -494,72 +660,31 @@ SisTest >> testSearchTraitsLike [
 	self assertCollection: result  equals: #('SisFixtureTraitForTest')
 ]
 
-{ #category : 'tests' }
-SisTest >> testApplySettings [
-	| url postData resp result getUrl getResp getResult |
-	url := self baseUrl / 'apply-settings'.
-	postData := { ('settings' -> { ('stackSize' -> 200). ('customKey' -> 'customValue') } asDictionary) } asDictionary.
-	resp := self post: url dictionary: postData.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result includesSubstring: 'Settings applied successfully').
-
-	"Verify settings were actually applied"
-	getUrl := self baseUrl / 'get-settings'.
-	getResp := self get: getUrl.
-	self assert: (getResp at: #success).
-	getResult := getResp at: #result.
-	self assert: (getResult at: #stackSize) equals: 200.
-	self assert: (getResult at: #customKey) equals: 'customValue'
+{ #category : 'tests-settings' }
+SisTest >> testSettingsFallbackEnvVarAbsent [
+	| settings result |
+	settings := SisSettings new.
+	result := settings at: #testPort fallback: {'PHARO_SIS_NONEXISTENT_XYZ'. 9999} type: Integer.
+	self assert: result equals: 9999
 ]
 
-{ #category : 'tests' }
-SisTest >> testGetSettings [
-	| url resp result |
-	url := self baseUrl / 'get-settings'.
-	resp := self get: url.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result isKindOf: Dictionary).
-	self assert: (result includesKey: #stackSize)
+{ #category : 'tests-settings' }
+SisTest >> testSettingsFallbackEnvVarFound [
+	| settings result |
+	settings := SisSettings new.
+	result := settings at: #testPath fallback: {'PATH'. ''}.
+	self assert: result equals: (OSEnvironment current at: 'PATH' ifAbsent: [''])
 ]
 
-{ #category : 'tests' }
-SisTest >> testApplySettingsWithSnakeCaseKeys [
-	"Test that snake_case keys are normalized to camelCase"
-	| url postData resp result getUrl getResp getResult |
-	url := self baseUrl / 'apply-settings'.
-	postData := { ('settings' -> { ('stack_size' -> 150). ('custom_key' -> 'snakeCaseValue') } asDictionary) } asDictionary.
-	resp := self post: url dictionary: postData.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result includesSubstring: 'Settings applied successfully').
-
-	"Verify settings were normalized to camelCase"
-	getUrl := self baseUrl / 'get-settings'.
-	getResp := self get: getUrl.
-	self assert: (getResp at: #success).
-	getResult := getResp at: #result.
-	self assert: (getResult at: #stackSize) equals: 150.
-	self assert: (getResult at: #customKey) equals: 'snakeCaseValue'
-]
-
-{ #category : 'tests' }
-SisTest >> testApplySettingsWithMixedCaseKeys [
-	"Test that both camelCase and snake_case keys can be used together"
-	| url postData resp result getUrl getResp getResult |
-	url := self baseUrl / 'apply-settings'.
-	postData := { ('settings' -> { ('stackSize' -> 180). ('another_key' -> 'mixedValue') } asDictionary) } asDictionary.
-	resp := self post: url dictionary: postData.
-	self assert: (resp at: #success).
-	result := resp at: #result.
-	self assert: (result includesSubstring: 'Settings applied successfully').
-
-	"Verify both settings were applied correctly"
-	getUrl := self baseUrl / 'get-settings'.
-	getResp := self get: getUrl.
-	self assert: (getResp at: #success).
-	getResult := getResp at: #result.
-	self assert: (getResult at: #stackSize) equals: 180.
-	self assert: (getResult at: #anotherKey) equals: 'mixedValue'
+{ #category : 'private-formatting' }
+SisTest >> withFormatterClass: aClassNameOrNil do: aBlock [
+	| settings wasConfigured previousValue |
+	settings := SisServer current settings.
+	wasConfigured := settings settingsDict includesKey: #formatterClass.
+	previousValue := settings at: #formatterClass ifAbsent: [ nil ].
+	settings formatterClass: aClassNameOrNil.
+	^ aBlock ensure: [
+		wasConfigured
+			ifTrue: [ settings formatterClass: previousValue ]
+			ifFalse: [ settings settingsDict removeKey: #formatterClass ifAbsent: [ nil ] ] ]
 ]
